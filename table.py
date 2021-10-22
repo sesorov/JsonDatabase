@@ -20,6 +20,7 @@ class Document(dict):
         super().__init__(value)
         self.doc_id = doc_id
 
+
 class JsonManager:
     """
     JSON file operations manager
@@ -43,8 +44,21 @@ class JsonManager:
         :return:
         """
 
-        with self.file.open('r', encoding=self.encoding) as handle:
-            return json.load(handle)
+        try:
+            with self.file.open('r', encoding=self.encoding) as handle:
+                return json.load(handle)
+        except json.decoder.JSONDecodeError:
+            return {}
+
+    def write(self, data):
+        """
+        Write dict to .json
+        :param data:
+        :return:
+        """
+
+        with self.file.open('w', encoding=self.encoding) as handle:
+            json.dump(data, handle, indent=4)
 
 
 class Table:
@@ -77,7 +91,7 @@ class Table:
         try:
             table = self.file_manager.read()[self.name]
             return len(table)
-        except KeyError:
+        except (KeyError, json.decoder.JSONDecodeError):
             return 0
 
     def __str__(self) -> str:
@@ -97,6 +111,27 @@ class Table:
         for _id, record in self.read().items():
             yield _id, record
 
+    def get_next_id(self):
+        """
+        Get id for the new added document
+        :return:
+        """
+
+        if self._next:
+            next_id = self._next
+            self._next += 1
+            return next_id
+
+        table = self.read()
+        if not table:
+            next_id = 1
+            self._next = next_id + 1
+            return next_id
+
+        last_id = int(max(list(table.keys())))
+        next_id = last_id + 1
+        return next_id
+
     def read(self):
         """
         Read data in current table
@@ -106,5 +141,50 @@ class Table:
         try:
             table = self.file_manager.read()[self.name]
             return {_id: record for _id, record in table.items()}
-        except KeyError:
+        except (KeyError, json.decoder.JSONDecodeError):
             return {}
+
+    def add(self, document):
+        """
+        Add a new document to table
+        :param document:
+        :return:
+        """
+
+        if isinstance(document, Document):
+            _id = document.doc_id
+
+            # We also reset the stored next ID so the next insert won't
+            # re-use document IDs by accident when storing an old value
+            self._next = None
+        else:
+            _id = self.get_next_id()
+
+        def updater(table):
+            assert _id not in table, f"[ADD][ERROR]: {_id} already exists."
+            table[_id] = document
+        self.update_table(updater)
+
+        return _id
+
+    def update_table(self, updater):
+        """
+        To only update portions of the table data, we first perform a read
+        operation, perform the update on the table data and then write
+        the updated data back to the storage.
+        :param updater:
+        :return:
+        """
+
+        tables = self.file_manager.read()
+
+        try:
+            raw_table = tables[self.name]
+        except (KeyError, json.decoder.JSONDecodeError):
+            raw_table = {}
+
+        table = {_id: record for _id, record in raw_table.items()}
+        updater(table)
+
+        tables[self.name] = {_id: record for _id, record in table.items()}
+        self.file_manager.write(tables)

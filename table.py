@@ -7,8 +7,11 @@ JsonDatabase base class (table)
 
 import os
 import json
+import inspect
 
 from pathlib import Path
+
+from query import Query
 
 
 class Document(dict):
@@ -66,12 +69,13 @@ class Table:
     Table stored in database (like collection in mongo)
     """
 
-    def __init__(self, name: str, file_manager: JsonManager):
+    def __init__(self, name: str, file_manager: JsonManager, keys: list = []):
         """
         Create instance for database from provided JsonManager
         """
         self._name = name
         self.file_manager = file_manager
+        self.keys = keys
         self._next = None
 
     @property
@@ -109,7 +113,7 @@ class Table:
         """
 
         for _id, record in self.read().items():
-            yield _id, record
+            yield Document(record, _id)
 
     def get_next_id(self):
         """
@@ -160,19 +164,54 @@ class Table:
         else:
             _id = self.get_next_id()
 
+        query = Query()
+
         def updater(table):
-            assert _id not in table, f"[ADD][ERROR]: {_id} already exists."
+            document_key = {key: document[key] for key in self.keys}
+            primary_key_exists = any([set(document_key.items()).issubset(set(record.items()))
+                                      for record in table.values()]) if document_key else False
+            assert _id not in table and not primary_key_exists, f"[ADD][ERROR]: Record already exists."
             table[_id] = document
-        self.update_table(updater)
+
+        try:
+            self.update_table(updater)
+        except AssertionError as err:
+            print(err)
 
         return _id
 
+    def delete(self, query=None, ids=None):
+        """
+        Remove documents (matching params) from table
+        :param query:
+        :param ids:
+        :return:
+        """
+
+        if ids:
+            def updater(table):
+                for _id in ids:
+                    table.pop(_id)
+
+            self.update_table(updater)
+            return ids
+
+        deleted = []
+
+        if query:
+            def updater(table):
+                for _id in list(table.keys()):
+                    if query(table[_id]):
+                        table.pop(_id)
+                        deleted.append(_id)
+            self.update_table(updater)
+
+        return deleted
+
     def update_table(self, updater):
         """
-        To only update portions of the table data, we first perform a read
-        operation, perform the update on the table data and then write
-        the updated data back to the storage.
-        :param updater:
+        Update table data based on updater function
+        :param updater: helper-function for updating
         :return:
         """
 
@@ -188,3 +227,30 @@ class Table:
 
         tables[self.name] = {_id: record for _id, record in table.items()}
         self.file_manager.write(tables)
+
+    def get_all(self):
+        """
+        Get all data from table
+        :return:
+        """
+
+        return list(iter(self))
+
+    def search(self, query):
+        """
+        Search through all records in table (like WHERE in SQL)
+        :return:
+        """
+        # print("table.search.query type: ", type(query))
+        # print("table.search.query._test: ", inspect.getsource(query._test))
+
+        return [record for record in self if query(record)]
+
+    def reset(self):
+        """
+        Delete all data in table
+        :return:
+        """
+
+        self.update_table(lambda table: table.clear())
+        self._next = None

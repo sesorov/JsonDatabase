@@ -45,11 +45,7 @@ class FrozenDict(dict):
         return self._d[key]
 
     def __hash__(self):
-        # It would have been simpler and maybe more obvious to
-        # use hash(tuple(sorted(self._d.iteritems()))) from this discussion
-        # so far, but this solution is O(n). I don't know what kind of
-        # n we are going to run into, but sometimes it's hard to resist the
-        # urge to optimize when it will gain improved algorithmic performance.
+        # hash(tuple(sorted(self._d.iteritems()))) -> 0(n)
         if self._hash is None:
             hash_ = 0
             for pair in self.items():
@@ -86,16 +82,10 @@ class Instance:
         return False
 
     def __and__(self, other):
-        # We use a frozenset for the hash as the AND operation is commutative
-        # (a & b == b & a) and the frozenset does not consider the order of
-        # elements
         return Instance(lambda value: self(value) and other(value),
                         ('and', frozenset([self._hash, other.hash])))
 
     def __or__(self, other):
-        # We use a frozenset for the hash as the OR operation is commutative
-        # (a | b == b | a) and the frozenset does not consider the order of
-        # elements
         return Instance(lambda value: self(value) or other(value),
                         ('or', frozenset([self._hash, other.hash])))
 
@@ -139,7 +129,7 @@ class Query(Instance):
 
     def proc_test(self, test, hash_value):
         """
-        Proceed a query from test function that first resolves the query path.
+        Proceed a query from test function.
         :param test:
         :param hash_value:
         :return:
@@ -232,8 +222,7 @@ class Query(Instance):
 
     def search(self, regex: str, flags: int = 0):
         """
-        Run a regex test against a dict value (only substring string has to
-        match).
+        Run a regex test for a dict value.
         :param regex: The regular expression to use for matching
         :param flags: regex flags to pass to re.match
         """

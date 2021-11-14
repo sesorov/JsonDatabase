@@ -164,8 +164,6 @@ class Table:
         else:
             _id = self.get_next_id()
 
-        query = Query()
-
         def updater(table):
             document_key = {key: document[key] for key in self.keys}
             primary_key_exists = any([set(document_key.items()).issubset(set(record.items()))

@@ -1,20 +1,38 @@
+import os
 import tkinter as tk
 import tkinter.messagebox as msg
 import pathlib
+
+import tabulate
+
 from pathlib import Path
 from tkinter import ttk
 from tkinter import *
+from subprocess import Popen, PIPE
 
 from database import JsonDatabase
 from table import JsonManager
 
 LARGEFONT = ("Verdana", 14)
 CURRENT_DB = None
+CURRENT_TABLE = None
+
+script_path = os.path.join(Path(__file__).parent, 'main.py')
 
 
 def insert_workdir(entry: Entry):
     cwd = pathlib.Path(__file__).parent.resolve()
     entry.insert(0, cwd)
+
+
+def db_execute(cmd_raw):
+    cmd = ' '.join([sys.executable, script_path]) + ' ' + cmd_raw
+    p = Popen(cmd, stdout=PIPE, stderr=PIPE, encoding='utf-8')
+    err = p.stderr.readline()
+    out = p.stdout.readline()
+    if err:
+        raise RuntimeError(err)
+    return out
 
 
 class App(tk.Tk):
@@ -146,56 +164,92 @@ class OperationsPage(tk.Frame):
     def update(self):
         global CURRENT_DB
         db_name = CURRENT_DB.file_manager.file.stem
-        label = ttk.Label(self, text=f"Database: {db_name}", font=LARGEFONT)
+        label_text = StringVar(value=f"Database: {db_name}")
+        label = ttk.Label(self, textvariable=label_text, font=LARGEFONT)
         label.grid(row=0, column=4, padx=10, pady=10)
 
         # commands executing interface
         entry_cmd = ttk.Entry(self)
         entry_cmd.grid(row=1, column=1, padx=10, pady=10)
         exec_button = ttk.Button(self, text="Execute",
-                                 command=lambda: self._execute(entry_cmd.get()))
+                                 command=lambda: db_execute(entry_cmd.get()))
         exec_button.grid(row=1, column=2, padx=10, pady=10)
 
         # table open & create
         entry_table = ttk.Entry(self)
         entry_table.grid(row=2, column=1, padx=10, pady=10)
         table_button = ttk.Button(self, text="Open / Create Table",
-                                  command=lambda: self._execute(None))
+                                  command=lambda: self._table(db_name, entry_table.get(), label_text))
         table_button.grid(row=2, column=2, padx=10, pady=10)
 
         # column addition interface
         entry_column_name = ttk.Entry(self)
         entry_column_name.grid(row=3, column=1, padx=10, pady=10)
-        is_column_required = tk.BooleanVar()
-        is_column_primary = tk.BooleanVar()
-        required_column_box = ttk.Checkbutton(self, text="Required", variable=is_column_required,
-                                              onvalue=True, offvalue=False)
-        required_column_box.grid(row=3, column=2, padx=10, pady=10)
-        primary_column_box = ttk.Checkbutton(self, text="Primary", variable=is_column_primary,
-                                             onvalue=True, offvalue=False)
-        primary_column_box.grid(row=3, column=3, padx=10, pady=10)
-        add_column_button = ttk.Button(self, text="Add column",
-                                       command=lambda: self._add_column(entry_column_name.get(),
-                                                                        is_column_required.get(),
-                                                                        is_column_primary.get()))
-        add_column_button.grid(row=3, column=4, padx=10, pady=10)
+        add_column_button = ttk.Button(self, text="Add primary key",
+                                       command=lambda: self._add_key(entry_column_name.get(), CURRENT_TABLE))
+        add_column_button.grid(row=3, column=2, padx=10, pady=10)
 
-        # add record -> column_name:value:type,column_name:value:type,column_name:value:type
-        entry_record = ttk.Entry(self)
+        # add record -> column_name:value:type column_name:value:type column_name:value:type
+        entry_record = ttk.Entry(self, width=50)
         entry_record.grid(row=4, column=1, padx=10, pady=10)
         add_record_button = ttk.Button(self, text="Add record",
-                                       command=lambda: self._add_record(entry_record.get()))
+                                       command=lambda: self._add_record(entry_record.get(), CURRENT_TABLE))
         add_record_button.grid(row=4, column=2, padx=10, pady=10)
 
-    def _execute(self, cmd):
-        #
-        pass
+        # view
+        view_button = ttk.Button(self, text="View table", command=lambda: self._view())
+        view_button.grid(row=5, column=1, padx=10, pady=10)
 
-    def _add_column(self, name, is_required, is_primary):
-        pass
+    def _table(self, db_name, table_name, label_text=None):
+        try:
+            global CURRENT_TABLE
+            db_execute(f"--path {CURRENT_DB.file_manager.file} set --create --table {table_name}")
+            CURRENT_TABLE = table_name
+            if label_text:
+                label_text.set(f"Database: {db_name}\nTable: {table_name}")
+        except RuntimeError as e:
+            msg.showerror(message="Error occurred while creating table. Please, check logs."
+                                  f"\n[technical]: {str(e)}")
 
-    def _add_record(self, params):
-        pass
+    def _add_key(self, key_name, table_name=CURRENT_TABLE):
+        try:
+            db_execute(f"--path {CURRENT_DB.file_manager.file} set --table {table_name} --key {key_name}")
+            msg.showinfo(message=f"Successfully added primary key {key_name} to {table_name}.")
+        except RuntimeError as e:
+            msg.showerror(message=f"Couldn't add primary key {key_name} to {table_name}. Please, check logs."
+                                  f"\n[technical]: {str(e)}")
+
+    def _add_record(self, params, table_name=CURRENT_TABLE):
+        try:
+            db_execute(f"--path {CURRENT_DB.file_manager.file} set --table {table_name} "
+                       f"--add {params}")
+            msg.showinfo(message=f"Successfully added record {params} to {table_name}.")
+        except RuntimeError as e:
+            msg.showerror(message=f"Couldn't add record {params} to {table_name}. Please, check logs."
+                                  f"\n[technical]: {str(e)}")
+
+    def _view(self, query=None):
+        try:
+            view_window = Tk()
+            view_window.title(f"{CURRENT_DB.file_manager.file}: {CURRENT_TABLE}")
+            if query:
+                pass
+            else:
+                columns = set()
+                data = CURRENT_DB.table(CURRENT_TABLE).get_all()
+                for record in data:
+                    columns.update(list(record.keys()))
+                data_tree = ttk.Treeview(view_window, columns=list(columns), show='headings')
+                for col in columns:
+                    data_tree.heading(col, text=col)
+                for record in data:
+                    values = list(record.get(key, '-') for key in columns)
+                    data_tree.insert("", 'end', values=values)
+                data_tree.pack(fill="x")
+                #data_tree.grid(row=6, columnspan=1)
+        except Exception as e:
+            msg.showerror(message="Couldn't display any info. Please, check logs."
+                                  f"\n[technical] {str(e)}")
 
 
 app = App()

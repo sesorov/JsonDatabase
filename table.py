@@ -10,6 +10,7 @@ import json
 import inspect
 
 from pathlib import Path
+from typing import cast
 
 from query import Query
 
@@ -19,7 +20,7 @@ class Document(dict):
     A document stored in the database.
     """
 
-    def __init__(self, value, doc_id: int):
+    def __init__(self, value, doc_id):
         super().__init__(value)
         self.doc_id = doc_id
 
@@ -40,6 +41,10 @@ class JsonManager:
                 pass
         self.encoding = encoding
         self.file = path
+
+    @property
+    def name(self):
+        return self.file.stem
 
     def read(self):
         """
@@ -115,6 +120,21 @@ class Table:
         for _id, record in self.read().items():
             yield Document(record, _id)
 
+    def add_key(self, key):
+        """
+        Add key to table primary keys
+        :param key: Column name
+        :return:
+        """
+
+        def updater(table):
+            if key not in self.keys:
+                self.keys.append(key)
+            for doc_id in list(table.keys()):
+                table[doc_id][key] = "null"
+
+        self.update_table(updater)
+
     def get_next_id(self):
         """
         Get id for the new added document
@@ -165,18 +185,60 @@ class Table:
             _id = self.get_next_id()
 
         def updater(table):
-            document_key = {key: document[key] for key in self.keys}
-            primary_key_exists = any([set(document_key.items()).issubset(set(record.items()))
-                                      for record in table.values()]) if document_key else False
-            assert _id not in table and not primary_key_exists, f"[ADD][ERROR]: Record already exists."
+            if self.keys:
+                primary_key_exists = any([set([document.get(key) for key in self.keys]).issubset(set([record.get(key) for key in self.keys]))
+                                          for record in table.values()]) if document else False
+                assert not primary_key_exists, f"[ADD][ERROR]: Record already exists."
+            assert _id not in table
             table[_id] = document
 
-        try:
-            self.update_table(updater)
-        except AssertionError as err:
-            print(err)
+        self.update_table(updater)
 
         return _id
+
+    def update(self, data: dict or Document, query=None, append=False):
+        """
+        Update all matching documents
+        :param data: new data
+        :param query: which documents to update
+        :param append: whether to append current data to existing (not rewrite) (only for lists)
+        :returns: a list containing the updated document's ID
+        """
+
+        updated_ids = []
+
+        if isinstance(data, Document):
+            def updater(table):
+                if append:
+                    old = table[data.doc_id]
+                    for key in data:
+                        old[key] += data[key]
+                    table[data.doc_id] = old
+                else:
+                    table[data.doc_id] = data
+
+        else:
+            def updater(table: dict):
+                cond = cast(Query, query)
+
+                for doc_id in list(table.keys()):
+                    if cond(table[doc_id]):
+                        updated_data = table[doc_id]
+                        old = updated_data.copy()
+                        table.pop(doc_id)
+
+                        updated_data.update(data)
+                        try:
+                            self.add(Document(updated_data, doc_id))
+                            updated_ids.append(doc_id)
+                        except AssertionError as err:
+                            print(err)
+                            table[doc_id] = old
+
+        # Perform the update operation (see _update_table for details)
+        self.update_table(updater)
+
+        return updated_ids
 
     def delete(self, query=None, ids=None):
         """
@@ -202,6 +264,7 @@ class Table:
                     if query(table[_id]):
                         table.pop(_id)
                         deleted.append(_id)
+
             self.update_table(updater)
 
         return deleted

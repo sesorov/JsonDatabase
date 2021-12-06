@@ -196,9 +196,19 @@ class OperationsPage(tk.Frame):
                                        command=lambda: self._add_record(entry_record.get(), CURRENT_TABLE))
         add_record_button.grid(row=4, column=2, padx=10, pady=10)
 
+        # delete record(s) by query
+        entry_del = ttk.Entry(self, width=50)
+        entry_del.grid(row=5, column=1, padx=10, pady=10)
+        del_button = ttk.Button(self, text="Delete by query",
+                                command=lambda: self._del_record(entry_del.get(), CURRENT_TABLE))
+        del_button.grid(row=5, column=2, padx=10, pady=10)
+
         # view
-        view_button = ttk.Button(self, text="View table", command=lambda: self._view())
-        view_button.grid(row=5, column=1, padx=10, pady=10)
+        entry_view = ttk.Entry(self, width=50)
+        entry_view.grid(row=6, column=1, padx=10, pady=10)
+        view_button = ttk.Button(self, text="View table (leave field empty for full)",
+                                 command=lambda: self._view(entry_view.get()))
+        view_button.grid(row=6, column=2, padx=10, pady=10)
 
     def _table(self, db_name, table_name, label_text=None):
         try:
@@ -228,25 +238,43 @@ class OperationsPage(tk.Frame):
             msg.showerror(message=f"Couldn't add record {params} to {table_name}. Please, check logs."
                                   f"\n[technical]: {str(e)}")
 
+    def _del_record(self, params, table_name=CURRENT_TABLE):
+        try:
+            db_execute(f"--path {CURRENT_DB.file_manager.file} set --table {table_name} "
+                       f"--delete {params}")
+            msg.showinfo(message=f"Successfully added record {params} to {table_name}.")
+        except RuntimeError as e:
+            msg.showerror(message=f"Couldn't delete anything by {params} in {table_name}. Please, check logs."
+                                  f"\n[technical]: {str(e)}")
+
     def _view(self, query=None):
+        import json
+
         try:
             view_window = Tk()
             view_window.title(f"{CURRENT_DB.file_manager.file}: {CURRENT_TABLE}")
+
+            data = []
+            columns = set()
             if query:
-                pass
+                try:
+                    data = json.loads(db_execute(f"--path {CURRENT_DB.file_manager.file} get --table {CURRENT_TABLE} "
+                                                 f"--search {query}").replace("'", '"'))
+                except RuntimeError as e:
+                    msg.showerror(message=f"Error occurred while searching {query} in {CURRENT_TABLE}. "
+                                          f"Please, check logs."
+                                          f"\n[technical]: {str(e)}")
             else:
-                columns = set()
                 data = CURRENT_DB.table(CURRENT_TABLE).get_all()
-                for record in data:
-                    columns.update(list(record.keys()))
-                data_tree = ttk.Treeview(view_window, columns=list(columns), show='headings')
-                for col in columns:
-                    data_tree.heading(col, text=col)
-                for record in data:
-                    values = list(record.get(key, '-') for key in columns)
-                    data_tree.insert("", 'end', values=values)
-                data_tree.pack(fill="x")
-                #data_tree.grid(row=6, columnspan=1)
+            for record in data:
+                columns.update(list(record.keys()))
+            data_tree = ttk.Treeview(view_window, columns=list(columns), show='headings')
+            for col in columns:
+                data_tree.heading(col, text=col)
+            for record in data:
+                values = list(record.get(key, '-') for key in columns)
+                data_tree.insert("", 'end', values=values)
+            data_tree.pack(fill="x")
         except Exception as e:
             msg.showerror(message="Couldn't display any info. Please, check logs."
                                   f"\n[technical] {str(e)}")
@@ -254,5 +282,5 @@ class OperationsPage(tk.Frame):
 
 app = App()
 app.title("Json Database v1.0")
-app.geometry("640x480")
+app.geometry("800x480")
 app.mainloop()

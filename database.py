@@ -46,7 +46,7 @@ class JsonDatabase(Table):
 
         table = Table(name, self.file_manager, primary_keys)
         if name != '__params__':
-            self.table('__params__').add(Document({"keys": primary_keys}, name))
+            self.table('__params__').add(Document({"keys": primary_keys or []}, name))
         self._tables[name] = table
         return table
 

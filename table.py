@@ -5,9 +5,8 @@
 JsonDatabase base class (table)
 """
 
-import os
 import json
-import inspect
+import hashlib
 
 from pathlib import Path
 from typing import cast
@@ -80,7 +79,8 @@ class Table:
         """
         self._name = name
         self.file_manager = file_manager
-        self.keys = keys
+        self.hashtable = JsonManager(Path(f"{self.file_manager.file.parent}\\{self._name}_hash.json"))
+        self.keys = keys or []
         self._next = None
 
     @property
@@ -131,7 +131,8 @@ class Table:
             if key not in self.keys:
                 self.keys.append(key)
             for doc_id in list(table.keys()):
-                table[doc_id][key] = "null"
+                if not table[doc_id].get(key, None):
+                    table[doc_id][key] = "null"
 
         self.update_table(updater)
 
@@ -189,10 +190,18 @@ class Table:
                 primary_key_exists = any([set([document.get(key) for key in self.keys]).issubset(set([record.get(key) for key in self.keys]))
                                           for record in table.values()]) if document else False
                 assert not primary_key_exists, f"[ADD][ERROR]: Record already exists."
-            assert _id not in table
+            if str(_id).isnumeric():
+                assert _id not in table
             table[_id] = document
 
+        def hash_updater(_table):
+            if self.keys:
+                doc_items = ''.join(document[key] for key in self.keys)
+                _hash = int(hashlib.sha1(doc_items.encode("utf-8")).hexdigest(), 16) % (10 ** 8)
+                _table[_hash] = _id
+
         self.update_table(updater)
+        self._update_hastable(hash_updater)
 
         return _id
 
@@ -248,12 +257,22 @@ class Table:
         :return:
         """
 
+        old_records = []
+
+        def hash_updater(_table):
+            for record in old_records:
+                doc_items = ''.join(record[key] for key in self.keys)
+                _hash = int(hashlib.sha1(doc_items.encode("utf-8")).hexdigest(), 16) % (10 ** 8)
+                _table.pop(str(_hash))
+
         if ids:
             def updater(table):
                 for _id in ids:
+                    old_records.append(table[_id])
                     table.pop(_id)
 
             self.update_table(updater)
+            self._update_hastable(hash_updater)
             return ids
 
         deleted = []
@@ -262,12 +281,22 @@ class Table:
             def updater(table):
                 for _id in list(table.keys()):
                     if query(table[_id]):
+                        old_records.append(table[_id])
                         table.pop(_id)
                         deleted.append(_id)
-
             self.update_table(updater)
+            self._update_hastable(hash_updater)
+            return deleted
 
-        return deleted
+    def _update_hastable(self, updater):
+        """
+        Update hash table with new keys
+        :return:
+        """
+
+        hashtable = self.hashtable.read()
+        updater(hashtable)
+        self.hashtable.write(hashtable)
 
     def update_table(self, updater):
         """
@@ -304,6 +333,16 @@ class Table:
         """
         # print("table.search.query type: ", type(query))
         # print("table.search.query._test: ", inspect.getsource(query._test))
+
+        try:
+            query_items = {q[1][0]: q[2] for q in query._hash[1] if q[0] == '=='}
+            if set(list(query_items.keys())) == set(self.keys):
+                doc_items = ''.join(query_items[key] for key in self.keys)
+                _hash = int(hashlib.sha1(doc_items.encode("utf-8")).hexdigest(), 16) % (10 ** 8)
+                table_id = self.hashtable.read()[_hash]
+                return [self.read()[table_id]]
+        except Exception:
+            pass
 
         return [record for record in self if query(record)]
 
